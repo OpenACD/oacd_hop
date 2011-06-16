@@ -2,4 +2,11 @@
 rm -rf oacd_hop
 mkdir oacd_hop
 ./rebar compile
-cp -R ebin include priv oacd_hop
+cp -R ebin include priv deps oacd_hop
+
+for file in oacd_hop/deps/*
+do
+	if [ -d $file ]
+		then rm -rf $file/.git*
+	fi
+done
