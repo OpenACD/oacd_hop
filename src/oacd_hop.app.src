@@ -1,0 +1,12 @@
+{application, oacd_hop, [
+	{description, ""},
+	{vsn, "1"},
+	{registered, []},
+	{applications, [
+		kernel,
+		stdlib,
+		'OpenACD'
+	]},
+	{mod, { oacd_hop, []}},
+	{env, []}
+]}.

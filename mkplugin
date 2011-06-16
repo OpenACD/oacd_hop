@@ -1,0 +1,5 @@
+#! /bin/bash
+rm -rf oacd_hop
+mkdir oacd_hop
+./rebar compile
+cp -R ebin include priv oacd_hop
