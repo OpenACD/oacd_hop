@@ -2,6 +2,10 @@
 
 -behaviour(gen_bunny).
 
+-include_lib("amqp_client/include/amqp_client.hrl").
+-include_lib("OpenACD/include/call.hrl").
+-include_lib("OpenACD/include/agent.hrl").
+
 -export([
 	init/1,
 	handle_message/2,
@@ -14,7 +18,6 @@
 
 %% api
 -export([
-	start/1,
 	start_link/1
 ]).
 
@@ -26,21 +29,28 @@
 %% API
 %% ========================================================================
 
-start(Opts) ->
-	gen_bunny:start(?MODULE, Opts, []).
-
 start_link(Opts) ->
-	gen_bunny:start_link(?MODULE, Opts, []).
+	Connection = proplists:get_value(connection, Opts, {network, #amqp_params{}}),
+	DeclareInfo = proplists:get_value(declare_info, Opts, {<<"OpenACD">>, <<"all">>, <<"all">>}),
+	gen_bunny:start_link(?MODULE, Connection, DeclareInfo, Opts).
 
 %% ========================================================================
 %% INIT
 %% ========================================================================
 
 init(Opts) ->
-	{ok, #state{}}.
+	CpxMon = case whereis(cpx_monitor) of
+		undefined ->
+			Self = self(),
+			erlang:send_after(10000, Self, {check, cpx_monitor});
+		Pid when is_pid(Pid) ->
+			cpx_monitor:subscribe(),
+			Pid
+	end,
+	{ok, #state{cpx = CpxMon}}.
 
 %% ========================================================================
-%% HANDLE_CALL
+%% HANDLE_MESSAGE
 %% ========================================================================
 
 handle_message(_Msg, State) ->
@@ -64,7 +74,23 @@ handle_cast(_Msg, State) ->
 %% HANDLE_INFO
 %% ========================================================================
 
-handle_info(_Msg, State) ->
+handle_info({cpx_monitor, M}, State) ->
+	io:format("cpx mon:  ~p\n", [M]),
+	{noreply, State};
+handle_info({check, cpx_monitor}, #state{cpx = Pid} = State) when is_pid(Pid) ->
+	{noreply, State};
+handle_info({check, cpx_monitor}, State) ->
+	CpxMon = case whereis(cpx_monitor) of
+		undefined ->
+			Self = self(),
+			erlang:send_after(10000, Self, {check, cpx_monitor});
+		Pid when is_pid(Pid) ->
+			cpx_monitor:subscribe(),
+			Pid
+	end,
+	{noreply, State#state{cpx = CpxMon}};
+handle_info(Msg, State) ->
+	io:format("msg:  ~p\n", [Msg]),
 	{noreply, State}.
 
 %% ========================================================================

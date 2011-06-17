@@ -18,7 +18,7 @@
 %% ===================================================================
 
 start(_StartType, _StartArgs) ->
-	oacd_hop_sup:start_link().
+	oacd_hop_sup:start_link([]).
 
 stop(_State) ->
 	ok.
