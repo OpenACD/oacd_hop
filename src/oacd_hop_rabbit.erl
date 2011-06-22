@@ -171,7 +171,7 @@ send(CdrRec, State) when is_record(CdrRec, cdr_rec) ->
 try_send(Send, #state{rabbit_chan = Chan} = State) ->
 	Bin = cpx_cdr_pb:encode(Send),
 	Msg = #amqp_msg{payload = Bin},
-	Publish = #'basic.publish'{exchange = <<"OpenACD">>, routing_key = <<"key">>},
+	Publish = #'basic.publish'{exchange = <<"OpenACD">>, routing_key = <<"all">>},
 	amqp_channel:cast(Chan, Publish, Msg),
 	State.
 %	Bin = protobuf_util:bin_to_netstring(cpx_cdr_pb:encode(Send)),
