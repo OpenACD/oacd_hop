@@ -2,7 +2,7 @@ rm -rf oacd_hop
 mkdir oacd_hop
 cp -R ebin include priv oacd_hop
 mkdir oacd_hop/deps
-cp -R deps/amqp_client deps/gen_bunny deps/meck deps/rabbit_common oacd_hop/deps
+cp -R contrib/rabbitmq-erlang-client/dist/amqp_client-0.0.0 contrib/rabbitmq-erlang-client/dist/rabbit_common-0.0.0 oacd_hop/deps
 
 for file in oacd_hop/deps/*
 do
