@@ -10,7 +10,6 @@
 
 -export([
 	init/1,
-	handle_message/2,
 	handle_call/3,
 	handle_cast/2,
 	handle_info/2,
@@ -43,8 +42,8 @@ start_link(Opts) ->
 %% ========================================================================
 
 init(Opts) ->
-	ConnectionRec = proplists:get_value(connection, Opts, #amqp_params{}),
-	{ok, RabbitConn} = amqp_connection:start({network, ConnectionRec}),
+	ConnectionRec = proplists:get_value(connection, Opts, #amqp_params_network{}),
+	{ok, RabbitConn} = amqp_connection:start(ConnectionRec),
 	{ok, RabbitChan} = amqp_connection:open_channel(RabbitConn),
 	Exchange = #'exchange.declare'{exchange = <<"OpenACD">>},
 	#'exchange.declare_ok'{} = amqp_channel:call(RabbitChan, Exchange),
@@ -62,13 +61,6 @@ init(Opts) ->
 			Pid
 	end,
 	{ok, #state{cpx = CpxMon, rabbit_conn = RabbitConn, rabbit_chan = RabbitChan}}.
-
-%% ========================================================================
-%% HANDLE_MESSAGE
-%% ========================================================================
-
-handle_message(_Msg, State) ->
-	{noreply, State}.
 
 %% ========================================================================
 %% HANDLE_CALL
@@ -89,12 +81,15 @@ handle_cast(_Msg, State) ->
 %% ========================================================================
 
 handle_info({cpx_monitor_event, {info, _Time, {agent_state, Astate}}}, State) ->
+	?DEBUG("Sending astate", []),
 	NewState = send(Astate, State),
 	{noreply, NewState};
 handle_info({cpx_monitor_event, {info, _Time, {cdr_raw, CdrRaw}}}, State) ->
+	?DEBUG("Sending cdr raw", []),
 	NewState = send(CdrRaw, State),
 	{noreply, NewState};
 handle_info({cpx_monitor_event, {info, _Time, {cdr_rec, CdrRec}}}, State) ->
+	?DEBUG("Sending cdr rec", []),
 	NewState = send(CdrRec, State),
 	{noreply, NewState};
 
@@ -140,6 +135,7 @@ cpx_msg_filter({info, _, {cdr_rec, _}}) ->
 cpx_msg_filter({info, _, {cdr_raw, _}}) ->
 	true;
 cpx_msg_filter(M) ->
+	?DEBUG("filtering out message ~p", [M]),
 	false.
 
 send(Astate, State) when is_record(Astate, agent_state) ->
@@ -193,8 +189,6 @@ next_id(LastId) when LastId > 999998 ->
 next_id(LastId) ->
 	LastId + 1.
 
-
-
 agent_state_to_protobuf(AgentState) ->
 	Base = #agentstatechange{
 		agent_id = AgentState#agent_state.id,
@@ -213,7 +207,7 @@ agent_state_to_protobuf(AgentState) ->
 		stop_time = AgentState#agent_state.ended,
 		profile = AgentState#agent_state.profile
 	},
-	case AgentState#agent_state.state of
+	case AgentState#agent_state.oldstate of
 		idle ->
 			Base;
 		precall ->
@@ -236,7 +230,6 @@ agent_state_to_protobuf(AgentState) ->
 		_ ->
 			Base
 	end.
-			
 
 cdr_rec_to_protobuf(Cdr) when is_record(Cdr, cdr_rec) ->
 	Summary = summary_to_protobuf(Cdr#cdr_rec.summary),
@@ -351,15 +344,6 @@ make_cpxcdrkeytime(Proplist) ->
 
 cdr_transaction_to_enum(T) ->
 	list_to_atom(string:to_upper(atom_to_list(T))).
-
-
-
-
-
-
-
-
-
 
 %% ========================================================================
 %% TEST
