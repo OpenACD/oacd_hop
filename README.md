@@ -8,7 +8,7 @@ from archiving and real-time reporting endpoints.
 Building
 ========
 
-./rebar get-deps compile
+    ./rebar get-deps compile
 
 This will get required dependancies and package only what is absolutly 
 needed for the plugin in './opacd_hop'.
