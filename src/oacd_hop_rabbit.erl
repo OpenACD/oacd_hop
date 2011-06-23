@@ -99,7 +99,7 @@ init(Opts) ->
 			link(RabbitConn),
 			{RabbitConn, RabbitChan};
 		{error, Else} ->
-			?WARNING("No rabbitmq conneciton, checking in 10 seconds", []),
+			?WARNING("No rabbitmq connection, checking in 10 seconds: ~p", [Else]),
 			erlang:send_after(10000, Self, {check, rabbitmq}),
 			{undefined, spawn(fun() -> ok end)}
 	end,
@@ -190,7 +190,7 @@ handle_info({check, rabbitmq}, #state{amqp_params = ConnectionRec} = State) ->
 			link(RabbitConn),
 			{noreply, State#state{rabbit_conn = RabbitConn, rabbit_chan = RabbitChan}};
 		Else ->
-			?WARNING("Could not reconnect to rabbit, retrying in 10 seconds", []),
+			?WARNING("Could not reconnect to rabbit, retrying in 10 seconds: ~p", [Else]),
 			Self = self(),
 			erlang:send_after(10000, Self, {check, rabbitmq}),
 			{noreply, State}
@@ -239,7 +239,7 @@ build_amqp_params([{Key, Value} | Tail], Acc) ->
 	end,
 	build_amqp_params(Tail, NewAcc).
 			
-lists_first([], Term) ->
+lists_first([], _Term) ->
 	0;
 lists_first(List, Term) ->
 	lists_first(List, Term, 1).
@@ -271,7 +271,7 @@ cpx_msg_filter({info, _, {cdr_rec, _}}) ->
 	true;
 cpx_msg_filter({info, _, {cdr_raw, _}}) ->
 	true;
-cpx_msg_filter(M) ->
+cpx_msg_filter(_M) ->
 	%?DEBUG("filtering out message ~p", [M]),
 	false.
 
@@ -471,7 +471,7 @@ summary_to_protobuf([{inqueue, {Total, Specifics}} | Tail], Acc) ->
 		inqueue_breakdown = make_cpxcdrkeytime(Specifics)
 	},
 	summary_to_protobuf(Tail, NewAcc);
-summary_to_protobuf([Head | Tail], Acc) ->
+summary_to_protobuf([_Head | Tail], Acc) ->
 	summary_to_protobuf(Tail, Acc).
 
 make_cpxcdrkeytime(Proplist) ->
