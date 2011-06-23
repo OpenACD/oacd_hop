@@ -42,7 +42,12 @@ start_link(Opts) ->
 %% ========================================================================
 
 init(Opts) ->
-	ConnectionRec = proplists:get_value(connection, Opts, #amqp_params_network{}),
+	ConnectionRec = case proplists:get_value(connection, Opts) of
+		undefined ->
+			build_amqp_params(Opts);
+		Rec when is_record(Rec, amqp_params_network) ->
+			Rec
+	end,
 	{ok, RabbitConn} = amqp_connection:start(ConnectionRec),
 	{ok, RabbitChan} = amqp_connection:open_channel(RabbitConn),
 	Exchange = #'exchange.declare'{exchange = <<"OpenACD">>},
@@ -127,6 +132,32 @@ code_change(_, _, State) ->
 %% ========================================================================
 %% INTERNAL
 %% ========================================================================
+
+build_amqp_params(Opts) ->
+	build_amqp_params(Opts, #amqp_params_network{}).
+
+build_amqp_params([], Acc) ->
+	Acc;
+build_amqp_params([{Key, Value} | Tail], Acc) ->
+	Fields = record_info(fields, amqp_params_network),
+	NewAcc = case lists:member(Key, Fields) of
+		false ->
+			Acc;
+		true ->
+			Elem = lists_first(Fields, Key) + 1,
+			setelement(Elem, Acc, Value)
+	end,
+	build_amqp_params(Tail, NewAcc).
+			
+lists_first([], Term) ->
+	0;
+lists_first(List, Term) ->
+	lists_first(List, Term, 1).
+
+lists_first([Term | _], Term, Acc) ->
+	Acc;
+lists_first([_ | Tail], Term, Acc) ->
+	lists_first(Tail, Term, Acc + 1).
 
 cpx_msg_filter({info, _, {agent_state, _}}) ->
 	true;

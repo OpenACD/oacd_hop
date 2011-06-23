@@ -18,7 +18,7 @@
 %% ===================================================================
 
 start(_StartType, _StartArgs) ->
-	oacd_hop_sup:start_link([]).
+	oacd_hop_sup:start_link(application:get_all_env(oacd_hop)).
 
 stop(_State) ->
 	ok.
