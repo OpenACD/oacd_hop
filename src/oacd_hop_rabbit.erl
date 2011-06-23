@@ -27,7 +27,8 @@
 	ack_queue = dict:new(),
 	cpx :: 'undefined' | pid(),
 	rabbit_conn,
-	rabbit_chan
+	rabbit_chan,
+	amqp_params
 }).
 
 %% ========================================================================
@@ -35,19 +36,21 @@
 %% ========================================================================
 
 start_link(Opts) ->
-	gen_server:start_link(?MODULE, Opts, []).
-
-%% ========================================================================
-%% INIT
-%% ========================================================================
-
-init(Opts) ->
 	ConnectionRec = case proplists:get_value(connection, Opts) of
 		undefined ->
 			build_amqp_params(Opts);
 		Rec when is_record(Rec, amqp_params_network) ->
 			Rec
 	end,
+	NewOpts = [{connection, ConnectionRec}],
+	gen_server:start_link(?MODULE, NewOpts, []).
+
+%% ========================================================================
+%% INIT
+%% ========================================================================
+
+init(Opts) ->
+	ConnectionRec = proplists:get_value(connection, Opts),
 	{ok, RabbitConn} = amqp_connection:start(ConnectionRec),
 	{ok, RabbitChan} = amqp_connection:open_channel(RabbitConn),
 	Exchange = #'exchange.declare'{exchange = <<"OpenACD">>},
@@ -86,15 +89,15 @@ handle_cast(_Msg, State) ->
 %% ========================================================================
 
 handle_info({cpx_monitor_event, {info, _Time, {agent_state, Astate}}}, State) ->
-	?DEBUG("Sending astate", []),
+	%?DEBUG("Sending astate", []),
 	NewState = send(Astate, State),
 	{noreply, NewState};
 handle_info({cpx_monitor_event, {info, _Time, {cdr_raw, CdrRaw}}}, State) ->
-	?DEBUG("Sending cdr raw", []),
+	%?DEBUG("Sending cdr raw", []),
 	NewState = send(CdrRaw, State),
 	{noreply, NewState};
 handle_info({cpx_monitor_event, {info, _Time, {cdr_rec, CdrRec}}}, State) ->
-	?DEBUG("Sending cdr rec", []),
+	%?DEBUG("Sending cdr rec", []),
 	NewState = send(CdrRec, State),
 	{noreply, NewState};
 
@@ -166,7 +169,7 @@ cpx_msg_filter({info, _, {cdr_rec, _}}) ->
 cpx_msg_filter({info, _, {cdr_raw, _}}) ->
 	true;
 cpx_msg_filter(M) ->
-	?DEBUG("filtering out message ~p", [M]),
+	%?DEBUG("filtering out message ~p", [M]),
 	false.
 
 send(Astate, State) when is_record(Astate, agent_state) ->
