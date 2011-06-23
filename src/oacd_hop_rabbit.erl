@@ -19,7 +19,8 @@
 
 %% api
 -export([
-	start_link/1
+	start_link/1,
+	reconfig/2
 ]).
 
 -record(state, {
@@ -45,34 +46,80 @@ start_link(Opts) ->
 	NewOpts = [{connection, ConnectionRec}],
 	gen_server:start_link(?MODULE, NewOpts, []).
 
+reconfig(Pid, Opts) when is_record(Opts, amqp_params_network) ->
+	reconfig(Pid, [{connection, Opts}]);
+reconfig(Pid, Opts) when is_list(Opts) ->
+	ConnectionRec = case proplists:get_value(connection, Opts) of
+		undefined ->
+			build_amqp_params(Opts);
+		Rec when is_record(Rec, amqp_params_network) ->
+			Rec
+	end,
+	gen_server:call(Pid, {reconfig, ConnectionRec}).
+	
+
 %% ========================================================================
 %% INIT
 %% ========================================================================
 
 init(Opts) ->
+	process_flag(trap_exit, true),
 	ConnectionRec = proplists:get_value(connection, Opts),
-	{ok, RabbitConn} = amqp_connection:start(ConnectionRec),
-	{ok, RabbitChan} = amqp_connection:open_channel(RabbitConn),
-	Exchange = #'exchange.declare'{exchange = <<"OpenACD">>},
-	#'exchange.declare_ok'{} = amqp_channel:call(RabbitChan, Exchange),
-	Queue = #'queue.declare'{queue =  <<"OpenACD.all">>},
-	#'queue.declare_ok'{} = amqp_channel:call(RabbitChan, Queue),
-	Binding = #'queue.bind'{queue = <<"OpenACD.all">>, exchange = <<"OpenACD">>, routing_key = <<"all">>},
-	#'queue.bind_ok'{} = amqp_channel:call(RabbitChan, Binding),
+	Self = self(),
 	CpxMon = case whereis(cpx_monitor) of
 		undefined ->
 			?WARNING("cpx_monitor not found, checking in 10 seconds", []),
-			Self = self(),
 			erlang:send_after(10000, Self, {check, cpx_monitor});
 		Pid when is_pid(Pid) ->
 			cpx_monitor:subscribe(fun cpx_msg_filter/1),
 			Pid
 	end,
-	{ok, #state{cpx = CpxMon, rabbit_conn = RabbitConn, rabbit_chan = RabbitChan}}.
+	{Conn, Chan} = case connect(ConnectionRec) of
+		{ok, {RabbitConn, RabbitChan}} ->
+			link(RabbitConn),
+			{RabbitConn, RabbitChan};
+		{error, Else} ->
+			?WARNING("No rabbitmq conneciton, checking in 10 seconds", []),
+			erlang:send_after(10000, Self, {check, rabbitmq}),
+			{undefined, spawn(fun() -> ok end)}
+	end,
+	{ok, #state{
+		cpx = CpxMon,
+		rabbit_conn = Conn,
+		rabbit_chan = Chan,
+		amqp_params = ConnectionRec
+	}}.
 
 %% ========================================================================
 %% HANDLE_CALL
 %% ========================================================================
+
+handle_call({reconfig, ConnectionRec}, _From, State) when is_record(ConnectionRec, amqp_params_network) ->
+	case connect(ConnectionRec) of
+		{ok, {Conn, Chan}} when is_pid(State#state.rabbit_conn) ->
+			link(Conn),
+			unlink(State#state.rabbit_conn),
+			amqp_connection:close(State#state.rabbit_conn),
+			NewState = State#state{
+				rabbit_conn = Conn,
+				rabbit_chan = Chan,
+				amqp_params = ConnectionRec
+			},
+			?DEBUG("Connection replaced", []),
+			{reply, ok, NewState};
+		{ok, {Conn, Chan}} ->
+			link(Conn),
+			NewState = State#state{
+				rabbit_conn = Conn,
+				rabbit_chan = Chan,
+				amqp_params = ConnectionRec
+			},
+			?DEBUG("Connection Established", []),
+			{reply, ok, NewState};
+		{error, Else} ->
+			?INFO("Replacement connection failed:  ~p", [Else]),
+			{reply, {error, Else}, State}
+	end;
 
 handle_call(Msg, _From, State) ->
 	{reply, {error, Msg}, State}.
@@ -114,6 +161,26 @@ handle_info({check, cpx_monitor}, State) ->
 			Pid
 	end,
 	{noreply, State#state{cpx = CpxMon}};
+
+handle_info({check, rabbitmq}, #state{rabbit_conn = Pid} = State) when is_pid(Pid) ->
+	{noreply, State};
+handle_info({check, rabbitmq}, #state{amqp_params = ConnectionRec} = State) ->
+	case connect(ConnectionRec) of
+		{ok, {RabbitConn, RabbitChan}} ->
+			link(RabbitConn),
+			{noreply, State#state{rabbit_conn = RabbitConn, rabbit_chan = RabbitChan}};
+		Else ->
+			?WARNING("Could not reconnect to rabbit, retrying in 10 seconds", []),
+			Self = self(),
+			erlang:send_after(10000, Self, {check, rabbitmq}),
+			{noreply, State}
+	end;
+
+handle_info({'EXIT', Pid, Reason}, #state{rabbit_conn = Pid} = State) ->
+	?WARNING("RabbitMQ connection ~p died due to ~p", [Pid, Reason]),
+	Self = self(),
+	erlang:send_after(10000, Self, {check, rabbitmq}),
+	{noreply, State#state{rabbit_conn = undefined}};
 
 handle_info(Msg, State) ->
 	?INFO("unhandled message ~p", [Msg]),
@@ -161,6 +228,22 @@ lists_first([Term | _], Term, Acc) ->
 	Acc;
 lists_first([_ | Tail], Term, Acc) ->
 	lists_first(Tail, Term, Acc + 1).
+
+connect(ConnectionRec) ->
+	case amqp_connection:start(ConnectionRec) of
+		{ok, RabbitConn} ->
+			{ok, RabbitChan} = amqp_connection:open_channel(RabbitConn),
+			Exchange = #'exchange.declare'{exchange = <<"OpenACD">>},
+			#'exchange.declare_ok'{} = amqp_channel:call(RabbitChan, Exchange),
+			Queue = #'queue.declare'{queue =  <<"OpenACD.all">>},
+			#'queue.declare_ok'{} = amqp_channel:call(RabbitChan, Queue),
+			Binding = #'queue.bind'{queue = <<"OpenACD.all">>, exchange = <<"OpenACD">>, routing_key = <<"all">>},
+			#'queue.bind_ok'{} = amqp_channel:call(RabbitChan, Binding),
+			{ok, {RabbitConn, RabbitChan}};
+		Else ->
+			%?WARNING("Could not reconnect to rabbit", []),
+			{error, Else}
+	end.
 
 cpx_msg_filter({info, _, {agent_state, _}}) ->
 	true;
