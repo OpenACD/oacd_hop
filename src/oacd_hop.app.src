@@ -5,7 +5,9 @@
 	{applications, [
 		kernel,
 		stdlib,
-		'OpenACD'
+		'OpenACD',
+		amqp_client,
+		rabbit_common
 	]},
 	{mod, { oacd_hop, []}},
 	{env, []}
