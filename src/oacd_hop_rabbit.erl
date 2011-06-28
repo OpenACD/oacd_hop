@@ -188,7 +188,8 @@ handle_info({check, rabbitmq}, #state{amqp_params = ConnectionRec} = State) ->
 	case connect(ConnectionRec) of
 		{ok, {RabbitConn, RabbitChan}} ->
 			link(RabbitConn),
-			{noreply, State#state{rabbit_conn = RabbitConn, rabbit_chan = RabbitChan}};
+			NewState = State#state{rabbit_conn = RabbitConn, rabbit_chan = RabbitChan},
+			{noreply, NewState};
 		Else ->
 			?WARNING("Could not reconnect to rabbit, retrying in 10 seconds: ~p", [Else]),
 			Self = self(),
@@ -253,6 +254,7 @@ connect(ConnectionRec) ->
 	case amqp_connection:start(ConnectionRec) of
 		{ok, RabbitConn} ->
 			{ok, RabbitChan} = amqp_connection:open_channel(RabbitConn),
+			amqp_channel:register_return_handler(RabbitChan, self()),
 			Exchange = #'exchange.declare'{exchange = <<"OpenACD">>},
 			#'exchange.declare_ok'{} = amqp_channel:call(RabbitChan, Exchange),
 			Queue = #'queue.declare'{queue =  <<"OpenACD.all">>},
@@ -300,26 +302,32 @@ send(CdrRec, State) when is_record(CdrRec, cdr_rec) ->
 		message_hint = 'CDR_REC',
 		cdr_rec = cdr_rec_to_protobuf(CdrRec)
 	},
-	NewDict = dict:store(NewId, Send, State#state.ack_queue),
-	try_send(Send, State#state{last_id = NewId, ack_queue = NewDict}).
+	try_send(Send, State#state{last_id = NewId}).
 
 
-
-try_send(Send, #state{rabbit_chan = Chan} = State) ->
+try_send(Send, #state{last_id = NewId, rabbit_chan = Chan} = State) ->
 	Bin = cpx_cdr_pb:encode(Send),
 	Msg = #amqp_msg{payload = Bin},
-	Publish = #'basic.publish'{exchange = <<"OpenACD">>, routing_key = <<"all">>},
-	amqp_channel:cast(Chan, Publish, Msg),
-	State.
-%	Bin = protobuf_util:bin_to_netstring(cpx_cdr_pb:encode(Send)),
-%	case gen_tcp:send(Socket, Bin) of
-%		ok ->
-%			State;
-%		{error, Else} ->
-%			State#state{socket = undefined}
-%	end.
+	Publish = #'basic.publish'{exchange = <<"OpenACD">>, routing_key = <<"all">>, mandatory = true},
+	try amqp_channel:call(Chan, Publish, Msg) of
+		ok ->
+			State
+	catch
+		W:Y ->
+			?WARNING("Failed to put ~p in queue:  ~p:~p", [NewId, W, Y]),
+			NewDict = dict:store(NewId, Send, State#state.ack_queue),
+			State#state{ack_queue = NewDict}
+	end.
 
+resend(#state{ack_queue = QDict} = State) ->
+	DictList = dict:to_list(QDict),
+	resend(DictList, State).
 
+resend([], State) ->
+	State;
+resend([{_Key, Bin} | Tail], State) ->
+	NewState = try_send(Bin, State),
+	resend(Tail, NewState).
 
 next_id(LastId) when LastId > 999998 ->
 	1;
