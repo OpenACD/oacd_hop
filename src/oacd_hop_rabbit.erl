@@ -167,6 +167,9 @@ handle_info({cpx_monitor_event, {info, _Time, {cdr_rec, CdrRec}}}, State) ->
 	%?DEBUG("Sending cdr rec", []),
 	NewState = send(CdrRec, State),
 	{noreply, NewState};
+handle_info({cpx_monitor_event, {info, _Time, {agent_profile, AProf}}}, State) ->
+	NewState = send(AProf, State),
+	{noreply, NewState};
 
 handle_info({check, cpx_monitor}, #state{cpx = Pid} = State) when is_pid(Pid) ->
 	{noreply, State};
@@ -269,6 +272,8 @@ connect(ConnectionRec) ->
 
 cpx_msg_filter({info, _, {agent_state, _}}) ->
 	true;
+cpx_msg_filter({info, _, {agent_profile, _}}) ->
+	true;
 cpx_msg_filter({info, _, {cdr_rec, _}}) ->
 	true;
 cpx_msg_filter({info, _, {cdr_raw, _}}) ->
@@ -283,6 +288,15 @@ send(Astate, State) when is_record(Astate, agent_state) ->
 		message_id = NewId,
 		message_hint = 'AGENT_STATE',
 		agent_state_change = agent_state_to_protobuf(Astate)
+	},
+	NewDict = dict:store(NewId, Send, State#state.ack_queue),
+	try_send(Send, State#state{last_id = NewId, ack_queue = NewDict});
+send(AProf, State) when is_record(AProf, agent_profile_change) ->
+	NewId = next_id(State#state.last_id),
+	Send = #cdrdumpmessage{
+		message_id = NewId,
+		message_hint = 'AGENT_PROFILE',
+		agent_profile_change = agent_profile_change_to_protobuf(AProf)
 	},
 	NewDict = dict:store(NewId, Send, State#state.ack_queue),
 	try_send(Send, State#state{last_id = NewId, ack_queue = NewDict});
@@ -306,6 +320,7 @@ send(CdrRec, State) when is_record(CdrRec, cdr_rec) ->
 
 
 try_send(Send, #state{last_id = NewId, rabbit_chan = Chan} = State) ->
+	?DEBUG("Das Send:  ~p", [Send]),
 	Bin = cpx_cdr_pb:encode(Send),
 	Msg = #amqp_msg{payload = Bin},
 	Publish = #'basic.publish'{exchange = <<"OpenACD">>, routing_key = <<"all">>, mandatory = true},
@@ -375,6 +390,17 @@ agent_state_to_protobuf(AgentState) ->
 		_ ->
 			Base
 	end.
+
+agent_profile_change_to_protobuf(AProf) ->
+	#agentprofilechange{
+		agent_id = AProf#agent_profile_change.id,
+		agent_login  = AProf#agent_profile_change.agent,
+		old_profile = AProf#agent_profile_change.old_profile,
+		new_profile = AProf#agent_profile_change.new_profile,
+		skills = AProf#agent_profile_change.skills,
+		dropped_skills = AProf#agent_profile_change.dropped_skills,
+		gained_skills = AProf#agent_profile_change.gained_skills
+	}.
 
 cdr_rec_to_protobuf(Cdr) when is_record(Cdr, cdr_rec) ->
 	Summary = summary_to_protobuf(Cdr#cdr_rec.summary),
