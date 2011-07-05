@@ -368,6 +368,11 @@ agent_state_to_protobuf(AgentState) ->
 		profile = AgentState#agent_state.profile
 	},
 	case AgentState#agent_state.oldstate of
+		login ->
+			Base#agentstatechange{
+				is_login = true,
+				skills = [protobuf_util:skill_to_protobuf(S) || S <- AgentState#agent_state.statedata]
+			};
 		idle ->
 			Base;
 		precall ->
