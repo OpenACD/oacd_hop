@@ -430,7 +430,7 @@ cdr_raw_to_protobuf(Cdr) when is_record(Cdr, cdr_raw) ->
 		end
 	},
 	case Cdr#cdr_raw.transaction of
-		cdrinit -> Base;
+		cdrinit -> Base#cpxcdrraw{call_record = protobuf_util:call_to_protobuf(Cdr#cdr_raw.eventdata)};
 		inivr -> Base#cpxcdrraw{ dnis = Cdr#cdr_raw.eventdata};
 		dialoutgoing -> Base#cpxcdrraw{number_dialed = Cdr#cdr_raw.eventdata};
 		inqueue -> Base#cpxcdrraw{queue = Cdr#cdr_raw.eventdata};
