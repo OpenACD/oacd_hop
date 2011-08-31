@@ -421,7 +421,7 @@ cdr_raw_to_protobuf(Cdr) when is_record(Cdr, cdr_raw) ->
 		call_id = Cdr#cdr_raw.id,
 		transaction = cdr_transaction_to_enum(Cdr#cdr_raw.transaction),
 		start_time = Cdr#cdr_raw.start,
-		stop_time = Cdr#cdr_raw.ended,
+		stop_time = case Cdr#cdr_raw.ended of undefined -> 0; _ -> Cdr#cdr_raw.ended end,
 		terminates = case Cdr#cdr_raw.terminates of
 			infoevent ->
 				'INFOEVENT';
