@@ -11,12 +11,12 @@ Building
     ./rebar get-deps compile
 
 This will get required dependancies and package only what is absolutly 
-needed for the plugin in './opacd_hop'.
+needed for the plugin in './plugin'.
 
 Installing
 ==========
 
-Place the entire 'oacd_hop' directory in OpenACD's plugins directory.  Then 
-in OpenACD's shell:
+Copy the contents of the created './plugin' directory into OpenACD's plugins
+directory.  Then in OpenACD's shell:
 
-    cpx:reload_plugins().
+    cpx:load_plugins(oacd_hop).
