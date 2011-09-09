@@ -435,7 +435,9 @@ cdr_raw_to_protobuf(Cdr) when is_record(Cdr, cdr_raw) ->
 		dialoutgoing -> Base#cpxcdrraw{number_dialed = Cdr#cdr_raw.eventdata};
 		inqueue -> Base#cpxcdrraw{queue = Cdr#cdr_raw.eventdata};
 		ringing -> Base#cpxcdrraw{agent = Cdr#cdr_raw.eventdata};
-		ringout -> Base#cpxcdrraw{agent = Cdr#cdr_raw.eventdata};
+		ringout -> 
+			{RingoutReason, RingoutAgent} = Cdr#cdr_raw.eventdata,
+			Base#cpxcdrraw{agent = RingoutAgent, ringout_reason = io_lib:format("~p", [RingoutReason])};
 		precall -> Base#cpxcdrraw{client = Cdr#cdr_raw.eventdata};
 		oncall -> Base#cpxcdrraw{agent = Cdr#cdr_raw.eventdata};
 		agent_transfer -> Base#cpxcdrraw{
