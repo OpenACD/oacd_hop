@@ -365,7 +365,11 @@ agent_state_to_protobuf(AgentState) ->
 		old_state = protobuf_util:statename_to_enum(AgentState#agent_state.oldstate),
 		start_time = AgentState#agent_state.start,
 		stop_time = AgentState#agent_state.ended,
-		profile = AgentState#agent_state.profile
+		profile = AgentState#agent_state.profile,
+		node = case AgentState#agent_state.state of
+			login -> node(cpx:get_agent(AgentState#agent_state.agent));
+			_ -> undefined
+		end
 	},
 	case AgentState#agent_state.oldstate of
 		login ->
