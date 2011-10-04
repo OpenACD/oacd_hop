@@ -367,7 +367,7 @@ agent_state_to_protobuf(AgentState) ->
 		stop_time = AgentState#agent_state.ended,
 		profile = AgentState#agent_state.profile,
 		node = case AgentState#agent_state.state of
-			login -> node(cpx:get_agent(AgentState#agent_state.agent));
+			login -> atom_to_list(node(cpx:get_agent(AgentState#agent_state.agent)));
 			_ -> undefined
 		end
 	},
