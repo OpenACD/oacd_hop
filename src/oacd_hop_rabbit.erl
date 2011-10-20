@@ -258,12 +258,12 @@ connect(ConnectionRec) ->
 		{ok, RabbitConn} ->
 			{ok, RabbitChan} = amqp_connection:open_channel(RabbitConn),
 			amqp_channel:register_return_handler(RabbitChan, self()),
-			Exchange = #'exchange.declare'{exchange = <<"OpenACD">>},
+			Exchange = #'exchange.declare'{exchange = <<"OpenACD">>, type = fanout},
 			#'exchange.declare_ok'{} = amqp_channel:call(RabbitChan, Exchange),
-			Queue = #'queue.declare'{queue =  <<"OpenACD.all">>},
-			#'queue.declare_ok'{} = amqp_channel:call(RabbitChan, Queue),
-			Binding = #'queue.bind'{queue = <<"OpenACD.all">>, exchange = <<"OpenACD">>, routing_key = <<"all">>},
-			#'queue.bind_ok'{} = amqp_channel:call(RabbitChan, Binding),
+			%Queue = #'queue.declare'{queue =  <<"OpenACD.all">>},
+			%#'queue.declare_ok'{} = amqp_channel:call(RabbitChan, Queue),
+			%Binding = #'queue.bind'{queue = <<"OpenACD.all">>, exchange = <<"OpenACD">>, routing_key = <<"all">>},
+			%#'queue.bind_ok'{} = amqp_channel:call(RabbitChan, Binding),
 			{ok, {RabbitConn, RabbitChan}};
 		Else ->
 			%?WARNING("Could not reconnect to rabbit", []),
