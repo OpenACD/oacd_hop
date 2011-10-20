@@ -258,7 +258,7 @@ connect(ConnectionRec) ->
 		{ok, RabbitConn} ->
 			{ok, RabbitChan} = amqp_connection:open_channel(RabbitConn),
 			amqp_channel:register_return_handler(RabbitChan, self()),
-			Exchange = #'exchange.declare'{exchange = <<"OpenACD">>, type = fanout},
+			Exchange = #'exchange.declare'{exchange = <<"OpenACD">>, type = <<"fanout">>},
 			#'exchange.declare_ok'{} = amqp_channel:call(RabbitChan, Exchange),
 			%Queue = #'queue.declare'{queue =  <<"OpenACD.all">>},
 			%#'queue.declare_ok'{} = amqp_channel:call(RabbitChan, Queue),
