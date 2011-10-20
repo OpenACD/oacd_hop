@@ -323,7 +323,7 @@ try_send(Send, #state{last_id = NewId, rabbit_chan = Chan} = State) ->
 	?DEBUG("Das Send:  ~p", [Send]),
 	Bin = cpx_cdr_pb:encode(Send),
 	Msg = #amqp_msg{payload = Bin},
-	Publish = #'basic.publish'{exchange = <<"OpenACD">>, routing_key = <<"all">>, mandatory = true},
+	Publish = #'basic.publish'{exchange = <<"OpenACD">>, routing_key = <<>>, mandatory = true},
 	try amqp_channel:call(Chan, Publish, Msg) of
 		ok ->
 			State
