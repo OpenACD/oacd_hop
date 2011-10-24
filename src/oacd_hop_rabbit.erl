@@ -258,7 +258,7 @@ connect(ConnectionRec) ->
 		{ok, RabbitConn} ->
 			{ok, RabbitChan} = amqp_connection:open_channel(RabbitConn),
 			amqp_channel:register_return_handler(RabbitChan, self()),
-			Exchange = #'exchange.declare'{exchange = <<"OpenACD">>, type = fanout},
+			Exchange = #'exchange.declare'{exchange = <<"OpenACD">>, type = <<"fanout">>},
 			#'exchange.declare_ok'{} = amqp_channel:call(RabbitChan, Exchange),
 			%Queue = #'queue.declare'{queue =  <<"OpenACD.all">>},
 			%#'queue.declare_ok'{} = amqp_channel:call(RabbitChan, Queue),
@@ -323,7 +323,7 @@ try_send(Send, #state{last_id = NewId, rabbit_chan = Chan} = State) ->
 	?DEBUG("Das Send:  ~p", [Send]),
 	Bin = cpx_cdr_pb:encode(Send),
 	Msg = #amqp_msg{payload = Bin},
-	Publish = #'basic.publish'{exchange = <<"OpenACD">>, routing_key = <<"all">>, mandatory = true},
+	Publish = #'basic.publish'{exchange = <<"OpenACD">>, routing_key = <<>>, mandatory = true},
 	try amqp_channel:call(Chan, Publish, Msg) of
 		ok ->
 			State
@@ -366,7 +366,7 @@ agent_state_to_protobuf(AgentState) ->
 		start_time = AgentState#agent_state.start,
 		stop_time = AgentState#agent_state.ended,
 		profile = AgentState#agent_state.profile,
-		node = case AgentState#agent_state.state of
+		node = case AgentState#agent_state.oldstate of
 			login -> atom_to_list(node(cpx:get_agent(AgentState#agent_state.agent)));
 			_ -> undefined
 		end
