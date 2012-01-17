@@ -470,6 +470,11 @@ cdr_raw_to_protobuf(Cdr) when is_record(Cdr, cdr_raw) ->
 			_ ->
 				Cdr#cdr_raw.eventdata
 		end};
+		{media_custom, CustomName} ->
+			Base#cpxcdrraw{
+				media_custom_name = atom_to_list(CustomName),
+				media_custom_terminated = [Name || {_Cust, Name} <- Cdr#cdr_raw.terminates]
+			};
 		undefined -> Base;
 		cdrend -> Base;
 		_ -> Base
@@ -524,6 +529,8 @@ make_cpxcdrkeytime(Proplist) ->
 		|| {Key, Value} <- Proplist].
 	
 
+cdr_transaction_to_enum({media_custom, _}) ->
+	cdr_transaction_to_enum(media_custom);
 cdr_transaction_to_enum(T) ->
 	list_to_atom(string:to_upper(atom_to_list(T))).
 
