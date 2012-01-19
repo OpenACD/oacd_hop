@@ -170,6 +170,9 @@ handle_info({cpx_monitor_event, {info, _Time, {cdr_rec, CdrRec}}}, State) ->
 handle_info({cpx_monitor_event, {info, _Time, {agent_profile, AProf}}}, State) ->
 	NewState = send(AProf, State),
 	{noreply, NewState};
+handle_info({cpx_monitor_event, {info, _Time, {agent_channel_state, AChanState}}}, State) ->
+	NewState = send(AChanState, State),
+	{noreply, NewState};
 
 handle_info({check, cpx_monitor}, #state{cpx = Pid} = State) when is_pid(Pid) ->
 	{noreply, State};
@@ -272,14 +275,16 @@ connect(ConnectionRec) ->
 
 cpx_msg_filter({info, _, {agent_state, _}}) ->
 	true;
+cpx_msg_filter({info, _, {agent_channel_state, _}}) ->
+	true;
 cpx_msg_filter({info, _, {agent_profile, _}}) ->
 	true;
 cpx_msg_filter({info, _, {cdr_rec, _}}) ->
 	true;
 cpx_msg_filter({info, _, {cdr_raw, _}}) ->
 	true;
-cpx_msg_filter(_M) ->
-	%?DEBUG("filtering out message ~p", [M]),
+cpx_msg_filter(M) ->
+	?DEBUG("filtering out message ~p", [M]),
 	false.
 
 send(Astate, State) when is_record(Astate, agent_state) ->
@@ -297,6 +302,15 @@ send(AProf, State) when is_record(AProf, agent_profile_change) ->
 		message_id = NewId,
 		message_hint = 'AGENT_PROFILE',
 		agent_profile_change = agent_profile_change_to_protobuf(AProf)
+	},
+	NewDict = dict:store(NewId, Send, State#state.ack_queue),
+	try_send(Send, State#state{last_id = NewId, ack_queue = NewDict});
+send(AChanState, State) when is_record(AChanState, agent_channel_state) ->
+	NewId = next_id(State#state.last_id),
+	Send = #cdrdumpmessage{
+		message_id = NewId,
+		message_hint = 'AGENT_CHANNEL_STATE',
+		agent_channel_state_change = agent_channel_state_to_protobuf(AChanState)
 	},
 	NewDict = dict:store(NewId, Send, State#state.ack_queue),
 	try_send(Send, State#state{last_id = NewId, ack_queue = NewDict});
@@ -379,26 +393,35 @@ agent_state_to_protobuf(AgentState) ->
 			};
 		idle ->
 			Base;
-		precall ->
-			Base#agentstatechange{
-				client_record = protobuf_util:client_to_protobuf(AgentState#agent_state.statedata)
-			};
 		released ->
 			Base#agentstatechange{
 				released = protobuf_util:release_to_protobuf(AgentState#agent_state.statedata)
 			};
-		warm_transfer ->
-			Base#agentstatechange{
-				call_record = protobuf_util:call_to_protobuf(element(2, AgentState#agent_state.statedata)),
-				dialed_number = protobuf_util:call_to_protobuf(AgentState#agent_state.statedata)
-			};
-		_ when is_record(AgentState#agent_state.statedata, call) ->
-			Base#agentstatechange{
-				call_record = protobuf_util:call_to_protobuf(AgentState#agent_state.statedata)
-			};
 		_ ->
 			Base
 	end.
+
+agent_channel_state_to_protobuf(AChanState) ->
+	#agent_channel_state{agent_id = AgentId, id = ChanId, oldstate = OldState,
+		state = CurState, statedata = StateData, start = Started,
+		ended = Ended} = AChanState,
+	#agentchannelstatechange{
+		agent_id = AgentId,
+		id = lists:flatten(io_lib:format("~p", [ChanId])),
+		oldstate = protobuf_util:channel_statename_to_enum(OldState),
+		state = protobuf_util:channel_statename_to_enum(CurState),
+		call_record = if
+			is_record(StateData, call) ->
+				protobuf_util:call_to_protobuf(StateData);
+			true -> undefined
+		end,
+		exit_cause = case CurState of
+			'exit' -> lists:flatten(io_lib:format("~p", [StateData]));
+			_ -> undefined
+		end,
+		start_time = Started,
+		stop_time = Ended
+	}.
 
 agent_profile_change_to_protobuf(AProf) ->
 	#agentprofilechange{
@@ -420,6 +443,7 @@ cdr_rec_to_protobuf(Cdr) when is_record(Cdr, cdr_rec) ->
 		details = Summary,
 		raw_transactions = Raws
 	}.
+
 cdr_raw_to_protobuf(Cdr) when is_record(Cdr, cdr_raw) ->
 	Base = #cpxcdrraw{
 		call_id = Cdr#cdr_raw.id,
