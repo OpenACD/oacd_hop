@@ -473,7 +473,7 @@ cdr_raw_to_protobuf(Cdr) when is_record(Cdr, cdr_raw) ->
 		{media_custom, CustomName} ->
 			Base#cpxcdrraw{
 				media_custom_name = atom_to_list(CustomName),
-				media_custom_terminated = [Name || {_Cust, Name} <- Cdr#cdr_raw.terminates]
+				media_custom_terminated = [atom_to_list(Name) || {_Cust, Name} <- Cdr#cdr_raw.terminates]
 			};
 		undefined -> Base;
 		cdrend -> Base;
