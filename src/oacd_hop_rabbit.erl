@@ -40,7 +40,9 @@
 %% api
 -export([
 	start_link/1,
-	reconfig/2
+	reconfig/2,
+	% exported to makes funs rebust over nodes
+	cpx_msg_filter/1
 ]).
 
 -record(state, {
@@ -91,7 +93,7 @@ init(Opts) ->
 			?WARNING("cpx_monitor not found, checking in 10 seconds", []),
 			erlang:send_after(10000, Self, {check, cpx_monitor});
 		Pid when is_pid(Pid) ->
-			cpx_monitor:subscribe(fun cpx_msg_filter/1),
+			cpx_monitor:subscribe(fun ?MODULE:cpx_msg_filter/1),
 			Pid
 	end,
 	{Conn, Chan} = case connect(ConnectionRec) of
