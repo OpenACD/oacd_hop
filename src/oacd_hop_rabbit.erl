@@ -67,7 +67,7 @@ start_link(Opts) ->
 			Rec
 	end,
 	NewOpts = [{connection, ConnectionRec}],
-	gen_server:start_link(?MODULE, NewOpts, []).
+	gen_server:start_link({local, ?MODULE}, ?MODULE, NewOpts, []).
 
 reconfig(Pid, Opts) when is_record(Opts, amqp_params_network) ->
 	reconfig(Pid, [{connection, Opts}]);
