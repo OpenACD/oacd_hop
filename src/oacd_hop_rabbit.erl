@@ -41,17 +41,18 @@
 -export([
 	start_link/1,
 	reconfig/2,
-	% exported to makes funs rebust over nodes
-	cpx_msg_filter/1
+	write/1,
+	begin_writing/0,
+	stop_writing/0
 ]).
 
 -record(state, {
 	last_id = 0,
 	ack_queue = dict:new(),
-	cpx :: 'undefined' | pid(),
 	rabbit_conn,
 	rabbit_chan,
-	amqp_params
+	amqp_params,
+	lead_status = backup :: 'backup' | 'leader'
 }).
 
 %% ========================================================================
@@ -78,7 +79,15 @@ reconfig(Pid, Opts) when is_list(Opts) ->
 			Rec
 	end,
 	gen_server:call(Pid, {reconfig, ConnectionRec}).
-	
+
+write(Rec) ->
+	gen_server:cast(?MODULE, {write, Rec}).
+
+begin_writing() ->
+	gen_server:cast(?MODULE, begin_write).
+
+stop_writing() ->
+	gen_server:cast(?MODULE, stop_write).
 
 %% ========================================================================
 %% INIT
@@ -87,30 +96,18 @@ reconfig(Pid, Opts) when is_list(Opts) ->
 init(Opts) ->
 	process_flag(trap_exit, true),
 	ConnectionRec = proplists:get_value(connection, Opts),
-	Self = self(),
-	CpxMon = case whereis(cpx_monitor) of
-		undefined ->
-			?WARNING("cpx_monitor not found, checking in 10 seconds", []),
-			erlang:send_after(10000, Self, {check, cpx_monitor});
-		Pid when is_pid(Pid) ->
-			cpx_monitor:subscribe(fun ?MODULE:cpx_msg_filter/1),
-			Pid
-	end,
-	{Conn, Chan} = case connect(ConnectionRec) of
+	case connect(ConnectionRec) of
 		{ok, {RabbitConn, RabbitChan}} ->
 			link(RabbitConn),
-			{RabbitConn, RabbitChan};
+			{ok, #state{
+				rabbit_conn = RabbitConn,
+				rabbit_chan = RabbitChan,
+				amqp_params = ConnectionRec
+			}};
 		{error, Else} ->
-			?WARNING("No rabbitmq connection, checking in 10 seconds: ~p", [Else]),
-			erlang:send_after(10000, Self, {check, rabbitmq}),
-			{undefined, spawn(fun() -> ok end)}
-	end,
-	{ok, #state{
-		cpx = CpxMon,
-		rabbit_conn = Conn,
-		rabbit_chan = Chan,
-		amqp_params = ConnectionRec
-	}}.
+			?WARNING("No rabbitmq connection ~p", [Else]),
+			{stop, {error, Else}}
+	end.
 
 %% ========================================================================
 %% HANDLE_CALL
@@ -150,6 +147,25 @@ handle_call(Msg, _From, State) ->
 %% HANDLE_CAST
 %% ========================================================================
 
+handle_cast(begin_write, State) ->
+	{noreply, State#state{lead_status = leader}};
+
+handle_cast(stop_write, State) ->
+	{noreply, State#state{lead_status = backup}};
+
+handle_cast({write, _Msg}, #state{lead_status = backup} = State) ->
+	{noreply, State};
+
+handle_cast({write, Msg}, #state{lead_status = leader} = State) ->
+	case send(Msg, State) of
+		{ok, NewState} ->
+			clear_cache(Msg),
+			{noreply, NewState};
+		{error, Error, NewState} ->
+			?ERROR("Could not write ~p due to ~p", [Msg, Error]),
+			{noreply, NewState}
+	end;
+
 handle_cast(_Msg, State) ->
 	{noreply, State}.
 
@@ -157,56 +173,9 @@ handle_cast(_Msg, State) ->
 %% HANDLE_INFO
 %% ========================================================================
 
-handle_info({cpx_monitor_event, {info, _Time, {agent_state, Astate}}}, State) ->
-	%?DEBUG("Sending astate", []),
-	NewState = send(Astate, State),
-	{noreply, NewState};
-handle_info({cpx_monitor_event, {info, _Time, {cdr_raw, CdrRaw}}}, State) ->
-	%?DEBUG("Sending cdr raw", []),
-	NewState = send(CdrRaw, State),
-	{noreply, NewState};
-handle_info({cpx_monitor_event, {info, _Time, {cdr_rec, CdrRec}}}, State) ->
-	%?DEBUG("Sending cdr rec", []),
-	NewState = send(CdrRec, State),
-	{noreply, NewState};
-handle_info({cpx_monitor_event, {info, _Time, {agent_profile, AProf}}}, State) ->
-	NewState = send(AProf, State),
-	{noreply, NewState};
-
-handle_info({check, cpx_monitor}, #state{cpx = Pid} = State) when is_pid(Pid) ->
-	{noreply, State};
-handle_info({check, cpx_monitor}, State) ->
-	CpxMon = case whereis(cpx_monitor) of
-		undefined ->
-			?WARNING("cpx_monitor not found, checking in 10 seconds", []),
-			Self = self(),
-			erlang:send_after(10000, Self, {check, cpx_monitor});
-		Pid when is_pid(Pid) ->
-			cpx_monitor:subscribe(),
-			Pid
-	end,
-	{noreply, State#state{cpx = CpxMon}};
-
-handle_info({check, rabbitmq}, #state{rabbit_conn = Pid} = State) when is_pid(Pid) ->
-	{noreply, State};
-handle_info({check, rabbitmq}, #state{amqp_params = ConnectionRec} = State) ->
-	case connect(ConnectionRec) of
-		{ok, {RabbitConn, RabbitChan}} ->
-			link(RabbitConn),
-			NewState = State#state{rabbit_conn = RabbitConn, rabbit_chan = RabbitChan},
-			{noreply, NewState};
-		Else ->
-			?WARNING("Could not reconnect to rabbit, retrying in 10 seconds: ~p", [Else]),
-			Self = self(),
-			erlang:send_after(10000, Self, {check, rabbitmq}),
-			{noreply, State}
-	end;
-
 handle_info({'EXIT', Pid, Reason}, #state{rabbit_conn = Pid} = State) ->
 	?WARNING("RabbitMQ connection ~p died due to ~p", [Pid, Reason]),
-	Self = self(),
-	erlang:send_after(10000, Self, {check, rabbitmq}),
-	{noreply, State#state{rabbit_conn = undefined}};
+	{stop, {rabbit_conn, Reason}, State#state{rabbit_conn = undefined}};
 
 handle_info(Msg, State) ->
 	?INFO("unhandled message ~p", [Msg]),
@@ -216,7 +185,9 @@ handle_info(Msg, State) ->
 %% TERMINATE
 %% ========================================================================
 
-terminate(_,_) -> ok.
+terminate(Cause,_) ->
+	?WARNING("Terminating:  ~p", [Cause]),
+	ok.
 
 %% ========================================================================
 %% CODE_CHANGE
@@ -228,6 +199,9 @@ code_change(_, _, State) ->
 %% ========================================================================
 %% INTERNAL
 %% ========================================================================
+
+clear_cache(Msg) ->
+	ets:delete_object(oacd_hop_unconfirmed, Msg).
 
 build_amqp_params(Opts) ->
 	build_amqp_params(Opts, #amqp_params_network{}).
@@ -271,18 +245,6 @@ connect(ConnectionRec) ->
 			%?WARNING("Could not reconnect to rabbit", []),
 			{error, Else}
 	end.
-
-cpx_msg_filter({info, _, {agent_state, _}}) ->
-	true;
-cpx_msg_filter({info, _, {agent_profile, _}}) ->
-	true;
-cpx_msg_filter({info, _, {cdr_rec, _}}) ->
-	true;
-cpx_msg_filter({info, _, {cdr_raw, _}}) ->
-	true;
-cpx_msg_filter(_M) ->
-	%?DEBUG("filtering out message ~p", [M]),
-	false.
 
 send(Astate, State) when is_record(Astate, agent_state) ->
 	NewId = next_id(State#state.last_id),
@@ -328,12 +290,12 @@ try_send(Send, #state{last_id = NewId, rabbit_chan = Chan} = State) ->
 	Publish = #'basic.publish'{exchange = <<"OpenACD">>, routing_key = <<>>, mandatory = true},
 	try amqp_channel:call(Chan, Publish, Msg) of
 		ok ->
-			State
+			{ok, State}
 	catch
 		W:Y ->
 			?WARNING("Failed to put ~p in queue:  ~p:~p", [NewId, W, Y]),
 			NewDict = dict:store(NewId, Send, State#state.ack_queue),
-			State#state{ack_queue = NewDict}
+			{error, {W,Y}, State#state{ack_queue = NewDict}}
 	end.
 
 resend(#state{ack_queue = QDict} = State) ->

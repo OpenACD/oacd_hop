@@ -18,113 +18,80 @@
 %%
 %% Micah Warren <micahw at lordnull dot com>
 
--module(oacd_hop_nodemon).
+-module(oacd_hop_subscriber).
 
 -include_lib("OpenACD/include/log.hrl").
 
--behaviour(gen_leader).
+-behaviour(gen_server).
 
-% gen_leader
--export([init/1,
-	elected/3, surrendered/3,
-	handle_leader_call/4, handle_leader_cast/3,
-	from_leader/3,
-	handle_call/4, handle_cast/3, handle_DOWN/3, handle_info/2,
-	terminate/2,
-	code_change/4
+% gen_server
+-export([
+	init/1,
+	handle_call/3, handle_cast/2, handle_info/2,
+	terminate/2, code_change/3
 ]).
 
 % api
--export([start/0, start_link/0]).
+-export([
+	start/0, start_link/0,
+	cpx_msg_filter/1
+]).
 
--record(state, {ets}).
+-record(state, {}).
 
 %% ========================================================================
 %% API
 %% ========================================================================
 
 start() ->
-	Nodes = [node() | nodes()],
-	gen_leader:start(?MODULE, Nodes, [], ?MODULE, [], []).
+	gen_server:start({local, ?MODULE}, ?MODULE, []).
 
 start_link() ->
-	Nodes = [node() | nodes()],
-	gen_leader:start_link(?MODULE, Nodes, [], ?MODULE, [], []).
+	gen_server:start_link({local, ?MODULE}, ?MODULE, []).
+
+cpx_msg_filter({info, _, {agent_state, _}}) ->
+	true;
+cpx_msg_filter({info, _, {agent_profile, _}}) ->
+	true;
+cpx_msg_filter({info, _, {cdr_rec, _}}) ->
+	true;
+cpx_msg_filter({info, _, {cdr_raw, _}}) ->
+	true;
+cpx_msg_filter(_M) ->
+	%?DEBUG("filtering out message ~p", [M]),
+	false.
 
 %% ========================================================================
-%% gen_leader callbacks
+%% gen_server callbacks
 %% ========================================================================
 
 %% ------------------------------------------------------------------------
-%% Init
+%% init
 %% ------------------------------------------------------------------------
 
-init(_Stuff) ->
-	?INFO("Starting", []),
-	{ok, #state{}}.
-
-%% ------------------------------------------------------------------------
-%% Elected
-%% ------------------------------------------------------------------------
-
-elected(State, _Election, _Node) ->
-	?INFO("Elected", []),
-	oacd_hop_rabbit:begin_writing(),
-	{ok, {}, State}.
-
-%% ------------------------------------------------------------------------
-%% Surrendered
-%% ------------------------------------------------------------------------
-
-surrendered(State, _LeaderMsg, _Election) ->
-	?INFO("Surrendered", []),
-	oacd_hop_rabbit:stop_writing(),
-	{ok, State}.
-
-%% ------------------------------------------------------------------------
-%% handle_DOWN
-%% ------------------------------------------------------------------------
-
-handle_DOWN(Node, State, _Election) ->
-	?INFO("~p has gone down.", [Node]),
-	{ok, State}.
-
-%% ------------------------------------------------------------------------
-%% handle_leader_call
-%% ------------------------------------------------------------------------
-
-handle_leader_call(Req, _From, State, _Election) ->
-	?WARNING("Unhandled request ~p", [Req]),
-	{reply, {error, invalid}, State}.
-
-%% ------------------------------------------------------------------------
-%% handle_leader_cast
-%% ------------------------------------------------------------------------
-
-handle_leader_cast(Req, State, _Election) ->
-	?WARNING("Unhandled cast ~p", [Req]),
-	{noreply, State}.
-
-%% ------------------------------------------------------------------------
-%% from_leader
-%% ------------------------------------------------------------------------
-
-from_leader(_Msg, State, _Election) ->
-	{ok, State}.
+init(_) ->
+	case whereis(cpx_monitor) of
+		undefined ->
+			{stop, {noproc, cpx_monitor}};
+		CpxMon when is_pid(CpxMon) ->
+			cpx_monitor:subscribe(fun ?MODULE:cpx_msg_filter/1),
+			ets:new(oacd_hop_unconfirmed, [named_table, bag, public]),
+			{ok, #state{}}
+	end.
 
 %% ------------------------------------------------------------------------
 %% handle_call
 %% ------------------------------------------------------------------------
 
-handle_call(Msg, _From, State, _Election) ->
-	?WARNING("Unhandled request ~p", [Msg]),
+handle_call(Msg, _From, State) ->
+	?WARNING("Unhandled request ~p", [Msg]), 
 	{reply, {error, invalid}, State}.
 
 %% ------------------------------------------------------------------------
 %% handle_cast
 %% ------------------------------------------------------------------------
 
-handle_cast(Msg, State, _Election) ->
+handle_cast(Msg, State) ->
 	?WARNING("Unhandled cast ~p", [Msg]),
 	{noreply, State}.
 
@@ -132,28 +99,49 @@ handle_cast(Msg, State, _Election) ->
 %% handle_info
 %% ------------------------------------------------------------------------
 
+handle_info({cpx_monitor_event, {info, _Time, {agent_state, Astate}}}, State) ->
+	%?DEBUG("Sending astate", []),
+	NewState = send(Astate, State),
+	{noreply, NewState};
+handle_info({cpx_monitor_event, {info, _Time, {cdr_raw, CdrRaw}}}, State) ->
+	%?DEBUG("Sending cdr raw", []),
+	NewState = send(CdrRaw, State),
+	{noreply, NewState};
+handle_info({cpx_monitor_event, {info, _Time, {cdr_rec, CdrRec}}}, State) ->
+	%?DEBUG("Sending cdr rec", []),
+	NewState = send(CdrRec, State),
+	{noreply, NewState};
+handle_info({cpx_monitor_event, {info, _Time, {agent_profile, AProf}}}, State) ->
+	NewState = send(AProf, State),
+	{noreply, NewState};
+
 handle_info(Msg, State) ->
-	?WARNING("Unhandled message:  ~p", [Msg]),
-	{norply, State}.
+	?WARNING("unhandled message ~p", [Msg]),
+	{noreply, State}.
 
 %% ------------------------------------------------------------------------
 %% terminate
 %% ------------------------------------------------------------------------
 
-terminate(Reason, _State) ->
-	?INFO("Exit:  ~p", [Reason]),
+terminate(Cause, _State) ->
+	?INFO("Exiting:  ~p", [Cause]),
 	ok.
 
 %% ------------------------------------------------------------------------
 %% code_change
 %% ------------------------------------------------------------------------
 
-code_change(_OldVsn, State, _Election, _Extra) ->
+code_change(_OldVsn, State, _Extra) ->
 	{ok, State}.
 
 %% ========================================================================
 %% Internal
 %% ========================================================================
+
+send(Rec, State) ->
+	oacd_hop_rabbit:write(Rec),
+	ets:insert(oacd_hop_unconfirmed, Rec),
+	State.
 
 %% ========================================================================
 %% Test
