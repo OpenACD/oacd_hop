@@ -44,10 +44,10 @@
 %% ========================================================================
 
 start() ->
-	gen_server:start({local, ?MODULE}, ?MODULE, []).
+	gen_server:start({local, ?MODULE}, ?MODULE, [], []).
 
 start_link() ->
-	gen_server:start_link({local, ?MODULE}, ?MODULE, []).
+	gen_server:start_link({local, ?MODULE}, ?MODULE, [], []).
 
 cpx_msg_filter({info, _, {agent_state, _}}) ->
 	true;
