@@ -72,10 +72,12 @@ cpx_msg_filter(_M) ->
 init(_) ->
 	case whereis(cpx_monitor) of
 		undefined ->
+			?ERROR("cpx_monitor not found, exiting immediately", []),
 			{stop, {noproc, cpx_monitor}};
 		CpxMon when is_pid(CpxMon) ->
 			cpx_monitor:subscribe(fun ?MODULE:cpx_msg_filter/1),
 			ets:new(oacd_hop_unconfirmed, [named_table, bag, public]),
+			?INFO("Starting", []),
 			{ok, #state{}}
 	end.
 

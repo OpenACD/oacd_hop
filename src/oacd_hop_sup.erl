@@ -43,11 +43,11 @@ start_link(Options) ->
 %% ===================================================================
 
 init(Options) ->
-		NodeMod = ?CHILD(oacd_hop_nodemon, worker, []),
 		Rabbit = ?CHILD(oacd_hop_rabbit, worker, [Options]),
 		CpxSub = ?CHILD(oacd_hop_subscriber, worker, []),
+		NodeMod = ?CHILD(oacd_hop_nodemon, worker, []),
 
-		Children = [NodeMod, Rabbit, CpxSub],
+		Children = [Rabbit, CpxSub, NodeMod],
 
     {ok, { {one_for_one, 5, 10}, Children } }.
 
