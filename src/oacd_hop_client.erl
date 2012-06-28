@@ -117,7 +117,7 @@ handle_info({#'basic.deliver'{delivery_tag = Tag}, Content}, State) ->
 	amqp_channel:cast(State#state.rabbit_chan, #'basic.ack'{delivery_tag = Tag}),
 	case State#state.output of
 		verbose ->
-			io:format("Message for you sir!\n\t~p", [Content]);
+			io:format("Message for you sir!\n\t~p\n", [Content]);
 		_ ->
 			ok
 	end,
