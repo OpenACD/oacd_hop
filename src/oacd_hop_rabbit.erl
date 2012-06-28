@@ -43,7 +43,9 @@
 	reconfig/2,
 	write/1,
 	begin_writing/0,
-	stop_writing/0
+	stop_writing/0,
+	build_amqp_params/1,
+	connect/1
 ]).
 
 -record(state, {
@@ -89,6 +91,43 @@ begin_writing() ->
 stop_writing() ->
 	gen_server:cast(?MODULE, stop_write).
 
+%% @doc Helper to take a proplist and turn it into a record suitable
+%% for loging into rabbitmq.
+build_amqp_params(Opts) ->
+	build_amqp_params(Opts, #amqp_params_network{}).
+
+build_amqp_params([], Acc) ->
+	Acc;
+build_amqp_params([{Key, Value} | Tail], Acc) ->
+	Fields = record_info(fields, amqp_params_network),
+	NewAcc = case lists:member(Key, Fields) of
+		false ->
+			Acc;
+		true ->
+			Elem = lists_first(Fields, Key) + 1,
+			setelement(Elem, Acc, Value)
+	end,
+	build_amqp_params(Tail, NewAcc).
+
+%% @doc creates a connection to rabbitmq for the correct queue.
+connect(ConnectionRec) ->
+	case amqp_connection:start(ConnectionRec) of
+		{ok, RabbitConn} ->
+			{ok, RabbitChan} = amqp_connection:open_channel(RabbitConn),
+			amqp_channel:register_return_handler(RabbitChan, self()),
+			Exchange = #'exchange.declare'{exchange = <<"OpenACD">>, type = <<"fanout">>},
+			#'exchange.declare_ok'{} = amqp_channel:call(RabbitChan, Exchange),
+			%Queue = #'queue.declare'{queue =  <<"OpenACD.all">>},
+			%#'queue.declare_ok'{} = amqp_channel:call(RabbitChan, Queue),
+			%Binding = #'queue.bind'{queue = <<"OpenACD.all">>, exchange = <<"OpenACD">>, routing_key = <<"all">>},
+			%#'queue.bind_ok'{} = amqp_channel:call(RabbitChan, Binding),
+			{ok, {RabbitConn, RabbitChan}};
+		Else ->
+			%?WARNING("Could not reconnect to rabbit", []),
+			{error, Else}
+	end.
+
+
 %% ========================================================================
 %% INIT
 %% ========================================================================
@@ -99,13 +138,14 @@ init(Opts) ->
 	case connect(ConnectionRec) of
 		{ok, {RabbitConn, RabbitChan}} ->
 			link(RabbitConn),
+			?INFO("Starting", []),
 			{ok, #state{
 				rabbit_conn = RabbitConn,
 				rabbit_chan = RabbitChan,
 				amqp_params = ConnectionRec
 			}};
 		{error, Else} ->
-			?WARNING("No rabbitmq connection ~p", [Else]),
+			?ERROR("No rabbitmq connection ~p", [Else]),
 			{stop, {error, Else}}
 	end.
 
@@ -203,22 +243,6 @@ code_change(_, _, State) ->
 clear_cache(Msg) ->
 	ets:delete_object(oacd_hop_unconfirmed, Msg).
 
-build_amqp_params(Opts) ->
-	build_amqp_params(Opts, #amqp_params_network{}).
-
-build_amqp_params([], Acc) ->
-	Acc;
-build_amqp_params([{Key, Value} | Tail], Acc) ->
-	Fields = record_info(fields, amqp_params_network),
-	NewAcc = case lists:member(Key, Fields) of
-		false ->
-			Acc;
-		true ->
-			Elem = lists_first(Fields, Key) + 1,
-			setelement(Elem, Acc, Value)
-	end,
-	build_amqp_params(Tail, NewAcc).
-			
 lists_first([], _Term) ->
 	0;
 lists_first(List, Term) ->
@@ -228,23 +252,6 @@ lists_first([Term | _], Term, Acc) ->
 	Acc;
 lists_first([_ | Tail], Term, Acc) ->
 	lists_first(Tail, Term, Acc + 1).
-
-connect(ConnectionRec) ->
-	case amqp_connection:start(ConnectionRec) of
-		{ok, RabbitConn} ->
-			{ok, RabbitChan} = amqp_connection:open_channel(RabbitConn),
-			amqp_channel:register_return_handler(RabbitChan, self()),
-			Exchange = #'exchange.declare'{exchange = <<"OpenACD">>, type = <<"fanout">>},
-			#'exchange.declare_ok'{} = amqp_channel:call(RabbitChan, Exchange),
-			%Queue = #'queue.declare'{queue =  <<"OpenACD.all">>},
-			%#'queue.declare_ok'{} = amqp_channel:call(RabbitChan, Queue),
-			%Binding = #'queue.bind'{queue = <<"OpenACD.all">>, exchange = <<"OpenACD">>, routing_key = <<"all">>},
-			%#'queue.bind_ok'{} = amqp_channel:call(RabbitChan, Binding),
-			{ok, {RabbitConn, RabbitChan}};
-		Else ->
-			%?WARNING("Could not reconnect to rabbit", []),
-			{error, Else}
-	end.
 
 send(Astate, State) when is_record(Astate, agent_state) ->
 	NewId = next_id(State#state.last_id),
@@ -284,7 +291,7 @@ send(CdrRec, State) when is_record(CdrRec, cdr_rec) ->
 
 
 try_send(Send, #state{last_id = NewId, rabbit_chan = Chan} = State) ->
-	?DEBUG("Das Send:  ~p", [Send]),
+	%?DEBUG("Das Send:  ~p", [Send]),
 	Bin = cpx_cdr_pb:encode(Send),
 	Msg = #amqp_msg{payload = Bin},
 	Publish = #'basic.publish'{exchange = <<"OpenACD">>, routing_key = <<>>, mandatory = true},
